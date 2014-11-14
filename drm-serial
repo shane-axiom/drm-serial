@@ -16,7 +16,7 @@ cleanup() {
   fi
   rm -rf tmp
 }
-#trap cleanup EXIT
+trap cleanup EXIT
 
 command -v genisoimage >/dev/null 2>&1 || { echo "genisoimage is required but not installed (aptitude install -y genisoimage)" >&2; exit 1; }
 
