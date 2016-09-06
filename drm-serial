@@ -20,6 +20,17 @@ trap cleanup EXIT
 
 command -v genisoimage >/dev/null 2>&1 || { echo "genisoimage is required but not installed (aptitude install -y genisoimage)" >&2; exit 1; }
 
+EMBED=0
+DRM_GRAFT="drm_files=tmp/mount/drm_files"
+while getopts "e" opt; do
+  case $opt in
+    e)
+      EMBED=1
+      ;;
+  esac
+done
+shift $(expr $OPTIND - 1)
+
 if [[ $# -ne 2 ]]; then
   echo "Pass path to ISO and output ISO as arguments"
   exit 1
@@ -46,6 +57,7 @@ echo Patching isolinux.cfg
 sed -i "s/\(append.*\)/\1 console=${TERMINAL},${BAUD}n8/" tmp/serial/isolinux/isolinux.cfg
 sed -i "1i serial 0 $BAUD" tmp/serial/isolinux/isolinux.cfg
 
+#patch SA.2
 echo Patching /etc/inittab
 mkdir tmp/SA.2_working
 pushd tmp/SA.2_working > /dev/null
@@ -53,10 +65,28 @@ zcat -S ".2" ../serial/isolinux/SA.2 | cpio -i --no-absolute-filenames
 #edit inittab
 sed -i 's/tty1::once/tty1::askfirst/' etc/inittab
 echo ttyS0::once:/sbin/agetty -l /etc/rc -n -8 -L $TERMINAL $BAUD vt100 >> etc/inittab
+
+if [[ $EMBED -eq 1 ]]; then
+  echo Patching bin/start-stage3.sh
+  cat << EOF > bin/start-stage3.sh
+#!/bin/sh
+/sbin/start_udev&
+udevadm settle
+sync
+/opt/dell/toolkit/systems/drm_files/apply_bundles.sh
+EOF
+
+  mkdir -p opt/dell/toolkit/systems/drm_files/
+  rsync -a ../mount/drm_files/ opt/dell/toolkit/systems/drm_files/
+
+  DRM_GRAFT=""
+fi
+
+#put SA.2 together
 find . | cpio --create --quiet --format='newc' | gzip -q > ../serial/isolinux/SA.2
 popd
 
 echo Making ISO image
 genisoimage -r -udf -b isolinux/isolinux.bin -c isolinux/boot.catalog -o "$2" -relaxed-filenames -no-emul-boot \
   -boot-info-table -boot-load-size 4 -eltorito-alt-boot -b efiboot.img -no-emul-boot \
-  -graft-points tmp/serial drm_files=tmp/mount/drm_files
+  -graft-points tmp/serial $DRM_GRAFT
